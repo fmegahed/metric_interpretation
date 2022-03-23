@@ -19,7 +19,7 @@ pacman::p_load(tidyverse, yardstick, # used for calculations
                shiny, flexdashboard, DT, # for the shiny/flexdashboard functions
                fontawesome) # for neat looking icons
 
-source('custom_functions_app.R')
+source('https://raw.githubusercontent.com/fmegahed/metric_interpretation/main/code/custom_functions_final.R')
 
 ```
 
