@@ -67,21 +67,21 @@ numericInput(
   label = 'Proportion of Reference Class:',
   value = 0.2,
   min = 0.001,
-  max = 0.5,
+  max = 0.999,
   step = NA,
   width = NULL
 )
 
 
 selectInput(inputId = 'pred_approach', 
-            label = 'Prediction Approach',
+            label = 'Prediction Approach:',
             choices = c('random', 'proportional'),
             selected = 'proportional')
 
 
 numericInput(
   'quantile',
-  label = 'Quantile to be Computed for Predictive Metrics:',
+  label = 'Quantile Computed for Classification Metrics:',
   value = 0.99,
   min = 0.005,
   max = 0.995,
@@ -100,9 +100,7 @@ numericInput(
 [Allison Jones-Farmer](https://miamioh.edu/fsb/directory/?up=/directory/farmerl2)     
 [Steven E. Rigdon](https://www.slu.edu/public-health-social-justice/faculty/rigdon-steven.php)
 
-**Version:** 0.0.1
-
-**Last Updated:** `r format(Sys.Date(), format = "%b %d, %Y")`
+**Version:** 0.1.0
 
 
 ---
