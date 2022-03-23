@@ -1,0 +1,321 @@
+---
+title: "The Variability in Commonly Used Classification Metrics with Class Imbalance"
+author:
+  - name: "Fadel M. Megahed ^[Email: fmegahed@miamioh.edu | Phone: +1-513-529-4185 | Website: <a href=\"https://miamioh.edu/fsb/directory/?up=/directory/megahefm\">Miami University Official</a>]"
+    affiliation: Farmer School of Business, Miami University
+  - name: "Allison Jones-Farmer ^[Email: farmerl2@miamioh.edu | Phone: +1-513-529-4823 | Website: <a href=\"https://miamioh.edu/fsb/directory/?up=/directory/farmerl2\">Miami University Official</a>]"
+    affiliation: Farmer School of Business, Miami University
+  - name: "Steve Rigdon ^[Email: steve.rigdon@slu.edu | Website: <a href=\"https://www.slu.edu/public-health-social-justice/faculty/rigdon-steven.php\">Saint Louis University Official</a>]"
+    affiliation: College of  Public Health and Social Justice, Saint Louis University
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    css: custom.css
+    code_folding: show
+    code_download: TRUE
+    number_sections: TRUE
+    paged_df: TRUE
+    toc: TRUE
+    toc_float: TRUE
+    theme: readable
+  includes:
+    in_header: structure.tex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE,
+                      echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE,
+                      progress = FALSE, 
+                      verbose = FALSE,
+                      dev = c('png', 'pdf', 'tiff'),
+                      fig.retina = 2,
+                      out.width = '100%',
+                      fig.asp = 0.7)
+
+options(qwraps2_markup = "markdown")
+
+# Setting properties for the default theme_bw() behavior for all plots
+if(require(ggplot2) == FALSE) install.packages("ggplot2")
+library(ggplot2) ; theme_set(theme_bw(base_size = 11) + theme(legend.position = 'top')) 
+
+# Setting default color palettes to RColorBrewer Palettes
+if(require(RColorBrewer) == FALSE) install.packages("RColorBrewer")
+scale_colour_discrete = scale_color_brewer(palette = "Paired")
+
+# Setting the random seed and chunk dependencies
+knitr::opts_chunk$set(cache.extra = set.seed(2022),
+                      autodep = TRUE) 
+knitr::dep_auto()
+```
+
+# R Setup and Required Packages
+In this project, the open-source R programming language is used to model the progression in the COVID-19 pandemic in different U.S. counties. R is maintained by an international team of developers who make the language available at [The Comprehensive R Archive Network](https://cran.r-project.org/). Readers interested in reusing our code and reproducing our results should have R installed locally on their machines. R can be installed on a number of different operating systems (see [Windows](https://cran.r-project.org/bin/windows/), [Mac](https://cran.r-project.org/bin/macosx/), and [Linux](https://cran.r-project.org/bin/linux/) for the installation instructions for these systems). We also recommend using the RStudio interface for R. The reader can [download RStudio](http://www.rstudio.com/ide) for free by following the instructions at the link. For non-R users, we recommend the [Hands-on Programming with R](https://rstudio-education.github.io/hopr/packages.html) for a brief overview of the software's functionality. Hereafter, we assume that the reader has an introductory understanding of the R programming language.
+
+In the code chunk below, we load the packages used to support our analysis. Note that the code of this and any of the code chunks can be hidden by clicking on the 'Hide' button to facilitate the navigation. **The reader can hide all code and/or download the Rmd file associated with this document by clicking on the Code button on the top right corner of this document.** Our input and output files can also be accessed/ downloaded from [fmegahed/metric_interpretation](https://github.com/fmegahed/metric_interpretation).
+
+
+```{r packages}
+# installing the pacman (PACkage MANager) package if not installed 
+if(require(pacman)==FALSE) install.packages("pacman")
+
+# load (and if not installed, install) the needed packages
+pacman::p_load(
+  tidyverse, # for data manipulation
+  yardstick, # for predictive performance metrics
+  plotly, # for interactive plots
+  DT # for nicely formatted tables
+) 
+
+```
+
+---
+
+# Preparing for the Simulation
+
+
+## Simulation Parameters
+
+```{r sim_paramaters}
+
+sim_num = 1:10^4 # setting the number of simulations per exp run to 10,000
+
+num_classes = c(2, 3, 5, 10) # number of classes
+
+num_observations = c(10^3, 10^4) # number of observations
+
+first_class_perc = c(0.01, 0.1, 0.2, (1/3), 0.5) # imbalance
+
+# prediction simulation approach; random or proportional based on training sample
+pred_approach = c('random', 'proportional') 
+
+quant_of_interest = 0.99 # quantile of interest
+```
+
+
+## Full Factorial Setup
+
+In the chunk below, we create a nested objected titled `sim_setup`, which is a tibble containing three variables:  
+
+  1. `exp_num` a unique id for each combination of `num_classes`, `num_observations`, `first_class_perc` and `pred_approach`.  
+  2. `sim_num`, which has values from 1 to `r scales::comma( max(sim_num) )`, repeating for each ID (i.e., each value for`exp_num` has `sim_num` from  1 to `r scales::comma( max(sim_num) ) `).  
+  3. `data`, which is list column, where each cell/row contains a tibble of 1 row and the four variables `num_classes`, `num_observations`, `first_class_perc` and `pred_approach`.   
+
+Note that the `data` column is the input used in our custom `sim_fun()`, which is shown/created in a subsequent subsection. 
+
+```{r full_factorial_setup}
+# the full factorial setup
+sim_setup = 
+  # creating a tibble of all combinations of the five experimental conditions
+  expand_grid( sim_num, num_classes, num_observations, first_class_perc,
+               pred_approach) %>% 
+  # using group_by to create ids which are NOT dependent on the sim_num
+  group_by(num_classes, num_observations, first_class_perc, pred_approach) %>% 
+  # using the dplyr::cur_group_id() to create the IDs
+  mutate( exp_num = cur_group_id() ) %>% 
+  # ungrouping since it was only performed to create unique ids
+  ungroup() %>% 
+  # moving the exp_num to the beginning
+  relocate( exp_num ) %>% 
+  # creating list columns for all the columns with except of ID-type columns
+  nest(data = -c(exp_num, sim_num) ) %>% 
+  # sort the experimental data by exp_num
+  arrange(exp_num)
+
+
+# saving the results as an rds file under the results folder
+write_rds(
+  x = sim_setup, file = '../results/sim_setup.rds'
+)
+```
+
+## Custom Functions
+
+### g-mean Calculation
+
+The `g_mean()` function below is used to compute the geomteric mean of any two variables.
+
+```{r g_mean_comp}
+g_mean = function(x, y){
+  
+  result = sqrt(x*y)
+  
+  return(result)
+}
+
+```
+
+
+### Big Simulation Function for Vectorized/Functional Programming
+
+The `sim_function()` is a custom vectorized function that generates:   
+
+  a. the simulated observations, which are used to mimic `true` (aka reference) values used to measure the classification performance  
+  b. simulated values for the predictions  
+
+The two vectors of observations and predictions are based on the values inputted in the `Simulation Paramaters` section (i.e., `num_classes`, `num_observations`, `first_class_perc` and `pred_approach`). 
+
+The function returns five classification metrics of interest:   
+
+  1. overall accuracy,   
+  2. sensitivity for the reference class `class_1`,   
+  3. specificity for the reference class `class_1`,   
+  4. f_measure for the reference class `class_1`, and   
+  5. the geometric mean of sensitivity and specificity (based on 2. and 3.)
+
+```{r big_sim_fun}
+sim_function = function(data = NULL, base_class_name = 'class_'){
+  
+  # extracting the relevant features from the data 
+  number_classes = data$num_classes
+  number_observations = data$num_observations
+  first_class_percentage = data$first_class_perc
+  prediction_approach = data$pred_approach
+
+  # generating the reference data
+  ref = sample(x = c(paste0(base_class_name, 1:number_classes)),
+               size = number_observations,
+               replace = T,
+               prob = c(first_class_percentage, 
+                        rep( (1-first_class_percentage)/(number_classes - 1),
+                             (number_classes -1 ) )
+               )
+  ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
+  
+  # generating the predictions
+  if(prediction_approach == 'proportional'){
+    predictions = sample(
+      x = c(paste0(base_class_name, 1:number_classes)),
+      size = number_observations,
+      replace = T,
+      prob = c(first_class_percentage, 
+               rep( (1-first_class_percentage)/(number_classes - 1),
+                    (number_classes -1 ) )
+      )
+    ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
+  } else{
+    predictions = sample(
+      x = c(paste0(base_class_name, 1:number_classes)),
+      size = number_observations,
+      replace = T,
+      prob = rep(1/number_classes, number_classes) 
+    ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
+  }
+  
+  
+  # computing the classification performance metrics of interest
+  acc_metrics = tibble(
+    accuracy = yardstick::accuracy_vec(truth = ref, estimate = predictions),
+    sensitivity = yardstick::sens_vec(truth = ref, estimate = predictions, 
+                                      event_level = 'first'),
+    specificity = yardstick::spec_vec(truth = ref, estimate = predictions, 
+                                      event_level = 'first'),
+    f_measure = yardstick::f_meas_vec(truth = ref, estimate = predictions, 
+                                      event_level = 'first'),
+    g_mean = g_mean(x = sensitivity, y = specificity)
+  )
+  
+  return(acc_metrics)
+}
+
+```
+
+
+---
+
+# Running the Experiment
+
+With our `sim_fun`, we can use a functional programming approach to compute the five classification metrics of interest for each simulation run. The results will be stored in an object titled `experimental_results`, which contains the 3 original columns from `sim_setup` and the new list column titled `acc_metrics`.
+
+```{r exp_run}
+experimental_results = 
+  sim_setup %>% # setup from a previous chunk
+  # creating a new list column titled acc_metrics, where the five classification
+  # metrics of choice are stored for each simulation run
+  
+  # The map function from purrr (part of tidyverse) allows us to perform row-wise 
+  # computations (i.e., for each combination of simulation parameters)
+  # on the `data` list column, where we use the variables within it to
+  # generate the random values and compute the classification metrics.
+  mutate(
+    acc_metrics = map(.x = data, .f = sim_function, base_class_name = 'class_')
+  )
+
+# saving the experimental results
+write_rds(
+  x = experimental_results, file = '../results/experimental_results.rds'
+)
+
+```
+
+---
+
+# Summarizing the Experimental Results
+
+Below, we compute the means, standard deviations and quantiles for each of the metrics, grouped by the ID (i.e., `exp_num`). We save the summary results into RDS and CSV formats (to facilitate their consumption by both R and non-R users). In addition, we print a table of the obtained results below.
+
+```{r exp_summary}
+summary_results = 
+  experimental_results %>% 
+  # unnesting the acc_metrics (i.e., generating columns for each of the metrics)
+  unnest( acc_metrics ) %>% 
+  # grouping by exp_num 
+  # (and data which is redundant but to keep it in the summary table)
+  group_by(exp_num, data) %>% 
+  # summaries of means, sds and quantile of interest for each metric by exp_num
+  summarise(
+    across(accuracy:g_mean,  
+           list(mean = ~ mean(.x, na.rm = TRUE),
+                sd = ~ sd(.x, na.rm = TRUE),
+                quantile = ~ quantile(.x, probs = quant_of_interest, na.rm = TRUE) ), 
+           .names = "{.fn}_{.col}" )
+  ) %>% 
+  # expanding the data into the different experimental conditions for interpretation
+  unnest(data)
+
+# storing the results as rds
+write_rds(
+  x = summary_results, file = '../results/summary_results.rds'
+)
+
+# we also, store the results as CSV
+write_csv(
+  x = summary_results, file = '../results/summary_results.csv'
+)
+
+# printing the results
+DT::datatable(
+  summary_results %>% mutate(across(where(is.numeric), round, 3)), 
+  filter = 'top',
+  extensions = c('Buttons'), 
+  options = list(
+    dom = 'Bfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+    pageLength = 20,
+    rownames = F
+  ) 
+) 
+
+```
+
+The results can be downloaded from [summary_results.csv](https://raw.githubusercontent.com/fmegahed/metric_interpretation/main/results/summary_results.csv).
+
+
+---
+
+# App for Citizen Data Scientists
+
+We have created a [flexdashboard](https://pkgs.rstudio.com/flexdashboard/index.html)-based web application, which allows users to input the simulation paramaters of interest and output the corresponding simulation summary and histograms of our five classification metrics of interest. The application can be accessed [here](http://rstudio.fsb.miamioh.edu:3838/megahefm/metric_interpretation/) and the code used to create the application can be downloaded from [here](https://github.com/fmegahed/metric_interpretation/tree/main/app).
+
+
+---
+
+# Appendix {-}
+
+In this appendix, we print all the R packages used in our analysis and their versions to assist with reproducing our results/analysis.
+
+```{r sessionInfo}
+pacman::p_load(pander)
+pander::pander(sessionInfo(), compact = TRUE) # printing the session info
+```
