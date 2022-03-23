@@ -286,16 +286,28 @@ write_csv(
 
 # printing the results
 DT::datatable(
-  summary_results %>% mutate(across(where(is.numeric), round, 3)), 
+  summary_results %>% mutate(across(where(is.numeric), round, 3)) %>% 
+    # moving and renaming columns purely for output presentation purposes
+    relocate(exp_num, num_classes, first_class_perc, pred_approach, num_observations) %>% 
+    rename(n_obs = num_observations, 
+           ref_prob = first_class_perc,
+           pred = pred_approach, 
+           mean_acc = mean_accuracy, sd_acc = sd_accuracy,
+           mean_sens = mean_sensitivity, sd_sens = sd_sensitivity, 
+           mean_spec = mean_specificity, sd_spec = sd_specificity,
+           mean_f_meas = mean_f_measure, sd_f_meas = sd_f_measure), 
   filter = 'top',
-  extensions = c('Buttons'), 
+  extensions = c('Buttons', 'FixedColumns'), 
+  rownames = FALSE,
   options = list(
+  initComplete = JS("function(settings, json) {$(this.api().table().container()).css({'font-size' : '10pt'});}"), 
     dom = 'Bfrtip',
     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
     pageLength = 20,
-    rownames = F
+    scrollX = TRUE,
+    fixedColumns = list(leftColumns = 4)
   ) 
-) 
+)
 
 ```
 
