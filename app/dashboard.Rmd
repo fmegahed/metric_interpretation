@@ -1,35 +1,37 @@
 ---
-title: "An Interactive Tool for Understanding/Quantifying the Variability in Classification Performance Metrics with Class Imbalance"
+title: "An Interactive Tool for Understanding Machine Learning Results for Imbalanced Data"
 output: 
   flexdashboard::flex_dashboard:
     theme: 
       version: 4
       bootswatch: simplex
     includes: 
-      in_header: header.html
-      after_body: busy.html
+      after_body: "busy.html"
 runtime: shiny
 ---
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 
-pacman::p_load(tidyverse, yardstick, # used for calculations
-               plotly, # for interactive plots
-               shiny, flexdashboard, DT, # for the shiny/flexdashboard functions
-               fontawesome) # for neat looking icons
+library(tidyverse)
+library(caret)
+library(plotly)
+library(shiny)
+library(flexdashboard)
+library(DT)
+library(fontawesome)
 
-source('https://raw.githubusercontent.com/fmegahed/metric_interpretation/main/code/custom_functions_final.R')
+source('custom_functions_app.R')
 
 ```
 
 
 ## Sidebar {.sidebar}
 
-<h5><b>Required Inputs</b></h5>
+**Required Inputs:**
 
 
-```{r shiny_inputs1}
+```{r shiny_inputs}
 numericInput(
   'sim_num',
   label = 'Simulation Replications:',
@@ -67,52 +69,59 @@ numericInput(
   label = 'Proportion of Reference Class:',
   value = 0.2,
   min = 0.001,
-  max = 0.999,
+  max = 0.5,
   step = NA,
   width = NULL
 )
 
 
 selectInput(inputId = 'pred_approach', 
-            label = 'Prediction Approach:',
-            choices = c('random', 'proportional'),
+            label = 'Prediction Approach',
+            choices = c('uniform', 'proportional'),
             selected = 'proportional')
 
 
 numericInput(
-  'quantile',
-  label = 'Quantile Computed for Classification Metrics:',
-  value = 0.99,
-  min = 0.005,
-  max = 0.995,
-  step = 0.005,
+  'histogram_percentile',
+  label = 'Percentile on Histograms:',
+  value = 0.95,
+  min = 0,
+  max = 1,
+  step = NA,
   width = NULL
 )
-
 ```
-
 
 
 ---
 
-<h5><b>Development Team</b></h5>  
-[Fadel M. Megahed](https://miamioh.edu/fsb/directory/?up=/directory/megahefm)   
+<br>
+
+**Created by:**   
+[Fadel M. Megahed](https://miamioh.edu/fsb/directory/?up=/directory/megahefm)  
+[Ying-Ju (Tessa) Chen](https://udayton.edu/directory/artssciences/mathematics/chen-ying-ju.php)  
 [Allison Jones-Farmer](https://miamioh.edu/fsb/directory/?up=/directory/farmerl2)     
 [Steven E. Rigdon](https://www.slu.edu/public-health-social-justice/faculty/rigdon-steven.php)
 
 **Version:** 0.1.0
 
+**Last Updated:** `r format(Sys.Date(), format = "%b %d, %Y")`
+
 
 ---
 
-<h5><b>For Correspondence</b></h5>  
-`r fa("inbox", fill = "steelblue")` $~$ [fmegahed\@miamioh.edu](mailto:fmegahed@miamioh.edu)  
-`r fa("twitter", fill = "steelblue")` $~$ [\@FadelMegahed](https://twitter.com/fadelmegahed)  
-`r fa("github", fill = "steelblue")` $~$ [\@fmegahed](https://github.com/fmegahed)  
+<br>
+
+**Correspondence:**
+
+`r fa("inbox", fill = "steelblue")` $~$ [fmegahed\@miamioh.edu](mailto:fmegahed@miamioh.edu)
+
+`r fa("twitter", fill = "steelblue")` $~$ [\@FadelMegahed](https://twitter.com/fadelmegahed)
+
+`r fa("github", fill = "steelblue")` $~$ [\@fmegahed](https://github.com/fmegahed)
 
 
-
-## Summary Column
+## Column
   
 ### Summary of Simulation Results
   
@@ -126,6 +135,7 @@ input_num_classes = reactive( x = as.numeric(input$num_classes) )
 input_num_observations = reactive( x = as.numeric(input$num_observations) )
 input_first_class_perc = reactive( x = as.numeric(input$first_class_perc) )
 input_pred_approach = reactive(x = as.character(input$pred_approach))
+input_histogram_percentile = reactive(x = as.numeric(input$histogram_percentile))
 
 
 sim_setup = reactive({
@@ -180,11 +190,9 @@ summary_results = reactive({
   group_by(exp_num, data) %>% 
   # creating summaries of means and sds for each of the metrics by exp_num
   summarise(
-    across(accuracy:g_mean,  
+    across(accuracy:f_measure,  
            list(mean = ~ mean(.x, na.rm = TRUE),
-                sd = ~ sd(.x, na.rm = TRUE), 
-           quantile = ~ quantile(.x, probs = as.numeric(input$quantile), na.rm = TRUE) ),
-           .names = "{.fn}_{.col}" )
+                sd = ~ sd(.x, na.rm = TRUE)), .names = "{.fn}_{.col}" )
   ) %>% 
   # expanding the data into the different experimental conditions for interpretation
   unnest(data)
@@ -198,74 +206,34 @@ renderUI({
   
   results = summary_results()
   
-  line1 = '<h4><b>Your selected inputs:</b></h4>'
+  line1 = '<font size="5"><b>Your selected inputs:</b></font>'
   line2 = paste0('<b>Number of simulations:</b>  ', scales::comma( max( input_sim_num() ) ) )
   line3 = paste0('<b>Number of classes:</b>  ', input_num_classes())
   line4 = paste0('<b>Number of observations:</b>  ', scales::comma(input_num_observations()) )
   line5 = paste0('<b>Reference class proportion:</b>  ', input_first_class_perc())
   line6 = paste0('<b>Prediction approach:</b>  ', input_pred_approach())
-  line7 = ' <br> '
-  line8 = '<h4><b>A summary of the simulation results:</b></h4>'
-  
-  line9 = paste0(
-    '<b>Accuracy:</b> ',
-    round(results$mean_accuracy, digits = 3) %>% format(nsmall = 3),
-    ' +/- ',
-    round(results$sd_accuracy, digits = 3) %>% format(nsmall = 3),
-    ' with ',
-    as.numeric(input$quantile) * 100,
-    '% of the accuracy metric values <= ',
-    round(results$quantile_accuracy, digits = 3) %>% format(nsmall = 3)
-  )
-  
-  line10 = paste0(
-    '<b>Sensitivity:</b>  ',
-    round(results$mean_sensitivity, digits = 3) %>% format(nsmall = 3),
-    ' +/- ',
-    round(results$sd_sensitivity, digits = 3),
-    ' with ',
-    as.numeric(input$quantile) * 100,
-    '% of the accuracy metric values <= ',
-    round(results$quantile_sensitivity, digits = 3) %>% format(nsmall = 3)
-  )
-  
-  
-  line11 = paste0(
-    '<b>Specificity:</b>  ',
-    round(results$mean_specificity, digits = 3) %>% format(nsmall = 3),
-    ' +/- ',
-    round(results$sd_specificity, digits = 3) %>% format(nsmall = 3),
-    ' with ',
-    as.numeric(input$quantile) * 100,
-    '% of the accuracy metric values <= ',
-    round(results$quantile_specificity, digits = 3) %>% format(nsmall = 3)
-  )
-  
-  line12 = paste0(
-    '<b>f_measure:</b>  ',
-    round(results$mean_f_measure, digits = 3) %>% format(nsmall = 3),
-    ' +/- ',
-    round(results$sd_f_measure, digits = 3) %>% format(nsmall = 3),
-    ' with ',
-    as.numeric(input$quantile) * 100,
-    '% of the accuracy metric values <= ',
-    round(results$quantile_f_measure, digits = 3) %>% format(nsmall = 3)
-  )
-  
-  line13 = paste0(
-    '<b>G-mean:</b>  ',
-    round(results$mean_g_mean, digits = 3) %>% format(nsmall = 3),
-    ' +/- ',
-    round(results$sd_g_mean, digits = 3) %>% format(nsmall = 3),
-    ' with ',
-    as.numeric(input$quantile) * 100,
-    '% of the accuracy metric values <= ',
-    round(results$quantile_g_mean, digits = 3) %>% format(nsmall = 3)
-  )
-  
+  line7 = paste0('<b>Percentile on histograms:</b>  ',
+                 input_histogram_percentile())
+  line8 = ' '
+  line9 = '<font size = "5"><b>A summary of the simulation results:</b></font>'
+  line10 = paste0('<b>Accuracy:</b>  ', round(results$mean_accuracy, 3), ' +/- ',
+                 round(results$sd_accuracy, 3))
+  line11 = paste0('<b>Sensitivity:</b>  ', round(results$mean_sensitivity, 3), ' +/- ',
+                 round(results$sd_sensitivity, 3))
+  line12 = paste0('<b>Specificity:</b>  ', round(results$mean_specificity, 3), ' +/- ',
+                 round(results$sd_specificity, 3))
+  line13 = paste0('<b>Geometric mean:</b>  ', round(results$mean_g_mean, 3), ' +/- ',
+                 round(results$sd_g_mean, 3))
+  line14 = paste0('<b>Precision:</b>  ', round(results$mean_precision, 3), ' +/- ',
+                 round(results$sd_precision, 3))
+  line15 = paste0('<b>Recall:</b>  ', round(results$mean_recall, 3), ' +/- ',
+                 round(results$sd_recall, 3)) 
+  line16 = paste0('<b>F1 score:</b>  ', round(results$mean_f_measure, 3), ' +/- ',
+                 round(results$sd_f_measure, 3))
   
   HTML(paste(line1, line2, line3, line4, line5, line6, line7,
              line8, line9, line10, line11, line12, line13, 
+             line14, line15, line16,
              sep = '<br/>'))
 }
 )
@@ -274,22 +242,21 @@ renderUI({
 
 ```
 
+### Histogram of the Results
 
-## Plots {.tabset .tabset-fade .tabset-pills}
-
-### Overall Accuracy
-
-```{r acc_plot}
-mean_acc = reactive({
-    experimental_results() %>% 
+```{r histogram_plot}
+df_mean = reactive({
+  experimental_results() %>% 
     # unnesting the acc_metrics (i.e., generating columns for each of the metrics)
   unnest( acc_metrics ) %>% 
     select(-data) %>% 
     pivot_longer(cols = accuracy:g_mean, names_to = 'metric') %>% 
     ungroup() %>% 
     group_by(metric) %>% 
-    summarise(mean = mean(value, na.rm = T) %>% round(digits = 3)) %>% 
-    filter(metric == 'accuracy')
+    summarise(
+      mean = mean(value, na.rm = T) %>% round(digits = 3), 
+      percentile = quantile(value, input_histogram_percentile(), na.rm=T) %>% round(digits =3)) %>% 
+    filter(metric != 'f_measure')
 })
 
 plot_data = reactive({
@@ -303,72 +270,27 @@ plot_data = reactive({
 
 renderPlotly({
   plot_data() %>% 
-    filter(metric == 'accuracy') %>% 
-    ggplot(aes(x = value, group = metric)) +
-  geom_histogram(aes(fill = as.factor(metric)), binwidth = 0.01, color = 'black') +
-  geom_vline(data = mean_acc(), 
-             aes(xintercept = mean), col='black', size = 1.75, linetype = 'dotdash') + 
-  scale_x_continuous(breaks = scales::pretty_breaks(10), limits = c(0,1)) +
-  scale_y_continuous(breaks = scales::pretty_breaks(5), labels = scales::comma) +
-  scale_fill_manual(values = '#E31A1C') +
-  scale_color_manual(values = '#FB9A99') +
-  theme_bw() +
-  theme(legend.position = 'none',
-        plot.title = element_text(size=11)) + 
-  labs(x = 'Accuracy Values', y = 'Count', 
-       title = paste('Values based on',
-                     scales::comma(input_sim_num() %>% max()), 'simulations,',
-                     'with a reference class proportion of', 
-                     input_first_class_perc(), 'and ',
-                     paste0('"', input_pred_approach(), '"'), 'predictions')) -> p
-  
-  plotly::ggplotly()
-})
-
-
-```
-
-
-
-### Histogram of ByClass Metrics
-
-```{r histogram_plot}
-df_mean = reactive({
-  experimental_results() %>% 
-    # unnesting the acc_metrics (i.e., generating columns for each of the metrics)
-  unnest( acc_metrics ) %>% 
-    select(-data) %>% 
-    pivot_longer(cols = accuracy:g_mean, names_to = 'metric') %>% 
-    ungroup() %>% 
-    group_by(metric) %>% 
-    summarise(mean = mean(value, na.rm = T) %>% round(digits = 3)) %>% 
-    filter(metric != 'accuracy')
-})
-
-
-renderPlotly({
-  plot_data() %>% 
-    filter(metric != 'accuracy') %>% 
+    filter(metric != 'f_measure') %>% 
     ggplot(aes(x = value, group = metric)) +
     facet_wrap(~ metric, scales = 'fixed') +
   geom_histogram(aes(fill = as.factor(metric)), binwidth = 0.01, color = 'black') +
   geom_vline(data = df_mean(), 
              aes(xintercept = mean), col='black', size = 1.75, linetype = 'dotdash') + 
+  geom_vline(data = df_mean(),
+             aes(xintercept = percentile), col="#E7298A", size=1.75, linetype = 'dotted') + 
   scale_x_continuous(breaks = scales::pretty_breaks(10), limits = c(0,1)) +
   scale_y_continuous(breaks = scales::pretty_breaks(5), labels = scales::comma) +
   scale_fill_brewer(palette = "Paired") +
   scale_color_brewer(palette = "Paired") +
   theme_bw() +
-  theme(legend.position = 'none',
-        plot.title = element_text(size=11)) + 
+  theme(legend.position = 'none') + 
   labs(x = 'Metric Values', y = 'Count', 
-       title = paste('Values based on',
-                     scales::comma(input_sim_num() %>% max()), 'simulations,',
-                     'with a reference class proportion of', 
-                     input_first_class_perc(), ' & ',
-                     paste0('"', input_pred_approach(), '"'), ' predictions')) -> p
+       title = paste('A histogram of the predictive metric values based on',
+                     scales::comma(input_sim_num() %>% max()), 'simulation runs',
+                     'with proportion of reference class of', 
+                     input_first_class_perc(), 'and the',
+                     paste0('"', input_pred_approach(), '"'), 'predictive strategy')) -> p
   
   plotly::ggplotly()
 })
 ```
-

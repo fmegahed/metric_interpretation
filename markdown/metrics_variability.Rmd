@@ -3,6 +3,8 @@ title: "The Variability in Commonly Used Classification Metrics with Class Imbal
 author:
   - name: "Fadel M. Megahed ^[Email: fmegahed@miamioh.edu | Phone: +1-513-529-4185 | Website: <a href=\"https://miamioh.edu/fsb/directory/?up=/directory/megahefm\">Miami University Official</a>]"
     affiliation: Farmer School of Business, Miami University
+  - name: "Ying-Ju (Tessa) Chen ^[Email: ychen4@udayton.edu | Phone: +1-937-229-2405 | Website: <a href=\"http://sites.udayton.edu/ychen4\">University of Dayton Official</a>]"
+    affiliation: Department of Mathematics, University of Dayton
   - name: "Allison Jones-Farmer ^[Email: farmerl2@miamioh.edu | Phone: +1-513-529-4823 | Website: <a href=\"https://miamioh.edu/fsb/directory/?up=/directory/farmerl2\">Miami University Official</a>]"
     affiliation: Farmer School of Business, Miami University
   - name: "Steve Rigdon ^[Email: steve.rigdon@slu.edu | Website: <a href=\"https://www.slu.edu/public-health-social-justice/faculty/rigdon-steven.php\">Saint Louis University Official</a>]"
@@ -45,7 +47,7 @@ if(require(RColorBrewer) == FALSE) install.packages("RColorBrewer")
 scale_colour_discrete = scale_color_brewer(palette = "Paired")
 
 # Setting the random seed and chunk dependencies
-knitr::opts_chunk$set(cache.extra = set.seed(2022),
+knitr::opts_chunk$set(cache.extra = set.seed(2023),
                       autodep = TRUE) 
 knitr::dep_auto()
 ```
@@ -63,7 +65,7 @@ if(require(pacman)==FALSE) install.packages("pacman")
 # load (and if not installed, install) the needed packages
 pacman::p_load(
   tidyverse, # for data manipulation
-  yardstick, # for predictive performance metrics
+  caret, # for predictive performance metrics
   plotly, # for interactive plots
   DT # for nicely formatted tables
 ) 
@@ -83,12 +85,11 @@ sim_num = 1:10^4 # setting the number of simulations per exp run to 10,000
 
 num_classes = c(2, 3, 5, 10) # number of classes
 
-num_observations = c(10^3, 10^4) # number of observations
+num_observations = c(100, 10^3, 10^4, 10^5) # number of observations
 
-first_class_perc = c(0.01, 0.1, 0.2, (1/3), 0.5) # imbalance
+first_class_perc = c(0.01, 0.05, 0.1, 0.2, (1/3), 0.5) # imbalance
 
-# prediction simulation approach; random or proportional based on training sample
-pred_approach = c('random', 'proportional') 
+pred_approach = c('uniform', 'proportional', 'most_frequent')
 
 quant_of_interest = 0.99 # quantile of interest
 ```
@@ -104,22 +105,22 @@ In the chunk below, we create a nested objected titled `sim_setup`, which is a t
 
 Note that the `data` column is the input used in our custom `sim_fun()`, which is shown/created in a subsequent subsection. 
 
-```{r full_factorial_setup}
+```{r full_factorial_setup, eval=FALSE}
 # the full factorial setup
 sim_setup = 
   # creating a tibble of all combinations of the five experimental conditions
   expand_grid( sim_num, num_classes, num_observations, first_class_perc,
-               pred_approach) %>% 
+               pred_approach) |>
   # using group_by to create ids which are NOT dependent on the sim_num
-  group_by(num_classes, num_observations, first_class_perc, pred_approach) %>% 
+  group_by(num_classes, num_observations, first_class_perc, pred_approach) |>
   # using the dplyr::cur_group_id() to create the IDs
-  mutate( exp_num = cur_group_id() ) %>% 
+  mutate( exp_num = cur_group_id() ) |>
   # ungrouping since it was only performed to create unique ids
-  ungroup() %>% 
+  ungroup() |>
   # moving the exp_num to the beginning
-  relocate( exp_num ) %>% 
+  relocate( exp_num ) |>
   # creating list columns for all the columns with except of ID-type columns
-  nest(data = -c(exp_num, sim_num) ) %>% 
+  nest(data = -c(exp_num, sim_num) ) |>
   # sort the experimental data by exp_num
   arrange(exp_num)
 
@@ -156,13 +157,15 @@ The `sim_function()` is a custom vectorized function that generates:
 
 The two vectors of observations and predictions are based on the values inputted in the `Simulation Paramaters` section (i.e., `num_classes`, `num_observations`, `first_class_perc` and `pred_approach`). 
 
-The function returns five classification metrics of interest:   
+The function returns seven classification metrics of interest:   
 
   1. overall accuracy,   
   2. sensitivity for the reference class `class_1`,   
-  3. specificity for the reference class `class_1`,   
-  4. f_measure for the reference class `class_1`, and   
-  5. the geometric mean of sensitivity and specificity (based on 2. and 3.)
+  3. specificity for the reference class `class_1`,  
+  4. the geometric mean of sensitivity and specificity,   
+  5. precision for the reference class `class_1`,   
+  6. recall for the reference class `class_1`, and     
+  7. f_measure for the reference class `class_1`.
 
 ```{r big_sim_fun}
 sim_function = function(data = NULL, base_class_name = 'class_'){
@@ -173,52 +176,65 @@ sim_function = function(data = NULL, base_class_name = 'class_'){
   first_class_percentage = data$first_class_perc
   prediction_approach = data$pred_approach
 
+
   # generating the reference data
-  ref = sample(x = c(paste0(base_class_name, 1:number_classes)),
-               size = number_observations,
-               replace = T,
-               prob = c(first_class_percentage, 
-                        rep( (1-first_class_percentage)/(number_classes - 1),
-                             (number_classes -1 ) )
-               )
-  ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
+  x = c(paste0(base_class_name, 1:number_classes))
+  ref = c(rep(x[1], number_observations*first_class_percentage),
+          rep(x[-1], each = number_observations*(1-first_class_percentage)/(number_classes-1)))
+  
+  if (length(ref)!=number_classes) ref = c(ref, rep(x[number_classes], (number_observations-length(ref))))
+  
+  ref = sample(ref, number_observations, replace=F) |> factor(levels = paste0(base_class_name, 1:number_classes) )
   
   # generating the predictions
-  if(prediction_approach == 'proportional'){
-    predictions = sample(
-      x = c(paste0(base_class_name, 1:number_classes)),
-      size = number_observations,
-      replace = T,
-      prob = c(first_class_percentage, 
-               rep( (1-first_class_percentage)/(number_classes - 1),
-                    (number_classes -1 ) )
-      )
-    ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
-  } else{
+  if(prediction_approach == 'uniform'){
     predictions = sample(
       x = c(paste0(base_class_name, 1:number_classes)),
       size = number_observations,
       replace = T,
       prob = rep(1/number_classes, number_classes) 
-    ) %>% factor(levels = paste0(base_class_name, 1:number_classes) )
+    ) |> factor(levels = paste0(base_class_name, 1:number_classes))
+  }else if(prediction_approach == 'proportional'){
+    predictions = sample(
+      x = c(paste0(base_class_name, 1:number_classes)),
+      size = number_observations,
+      replace = T,
+      prob = (table(ref)/length(ref))
+    ) |> factor(levels = paste0(base_class_name, 1:number_classes))
+  } else{
+    prob = (table(ref)/length(ref))
+    predictions = rep(
+      paste0(base_class_name, which.max(prob)),
+      times = number_observations
+    ) |> factor(levels = paste0(base_class_name, 1:number_classes) )
   }
   
+  conf_matrix = caret::confusionMatrix(data = predictions, reference = ref)
   
-  # computing the classification performance metrics of interest
+  # computing the acc metrics of interest
+  if (number_classes == 2){
+    acc_metrics = tibble(
+      accuracy = conf_matrix$overall['Accuracy'],
+      sensitivity = conf_matrix$byClass["Sensitivity"],
+      specificity = conf_matrix$byClass["Specificity"],
+      g_mean = g_mean(x = sensitivity, y = specificity),
+      precision = conf_matrix$byClass["Precision"],
+      recall = conf_matrix$byClass["Recall"],
+      f_measure = conf_matrix$byClass["F1"]
+    )
+  }else{
   acc_metrics = tibble(
-    accuracy = yardstick::accuracy_vec(truth = ref, estimate = predictions),
-    sensitivity = yardstick::sens_vec(truth = ref, estimate = predictions, 
-                                      event_level = 'first'),
-    specificity = yardstick::spec_vec(truth = ref, estimate = predictions, 
-                                      event_level = 'first'),
-    f_measure = yardstick::f_meas_vec(truth = ref, estimate = predictions, 
-                                      event_level = 'first'),
-    g_mean = g_mean(x = sensitivity, y = specificity)
+    accuracy = conf_matrix$overall['Accuracy'],
+    sensitivity = conf_matrix$byClass[paste0("Class: ", base_class_name, 1), "Sensitivity"],
+    specificity = conf_matrix$byClass[paste0("Class: ", base_class_name, 1), "Specificity"],
+    g_mean = g_mean(x = sensitivity, y = specificity),
+    precision = conf_matrix$byClass[paste0("Class: ", base_class_name, 1), "Precision"],
+    recall = conf_matrix$byClass[paste0("Class: ", base_class_name, 1), "Recall"],
+    f_measure = conf_matrix$byClass[paste0("Class: ", base_class_name, 1), "F1"]
   )
-  
+  }
   return(acc_metrics)
 }
-
 ```
 
 
@@ -228,9 +244,9 @@ sim_function = function(data = NULL, base_class_name = 'class_'){
 
 With our `sim_fun`, we can use a functional programming approach to compute the five classification metrics of interest for each simulation run. The results will be stored in an object titled `experimental_results`, which contains the 3 original columns from `sim_setup` and the new list column titled `acc_metrics`.
 
-```{r exp_run}
+```{r exp_run, eval=FALSE}
 experimental_results = 
-  sim_setup %>% # setup from a previous chunk
+  sim_setup |># setup from a previous chunk
   # creating a new list column titled acc_metrics, where the five classification
   # metrics of choice are stored for each simulation run
   
@@ -255,22 +271,26 @@ write_rds(
 
 Below, we compute the means, standard deviations and quantiles for each of the metrics, grouped by the ID (i.e., `exp_num`). We save the summary results into RDS and CSV formats (to facilitate their consumption by both R and non-R users). In addition, we print a table of the obtained results below.
 
+```{r, echo=FALSE}
+experimental_results <- readRDS("G:/.shortcut-targets-by-id/101rwrFdbPyfMrdcJRlP6qlTOIx9sXTe_/sensitivity/results/experimental_results_0605.rds")
+```
+
 ```{r exp_summary}
 summary_results = 
-  experimental_results %>% 
+  experimental_results |>
   # unnesting the acc_metrics (i.e., generating columns for each of the metrics)
-  unnest( acc_metrics ) %>% 
+  unnest( acc_metrics ) |>
   # grouping by exp_num 
   # (and data which is redundant but to keep it in the summary table)
-  group_by(exp_num, data) %>% 
+  group_by(exp_num, data) |>
   # summaries of means, sds and quantile of interest for each metric by exp_num
   summarise(
-    across(accuracy:g_mean,  
+    across(accuracy:f_measure,  
            list(mean = ~ mean(.x, na.rm = TRUE),
                 sd = ~ sd(.x, na.rm = TRUE),
                 quantile = ~ quantile(.x, probs = quant_of_interest, na.rm = TRUE) ), 
            .names = "{.fn}_{.col}" )
-  ) %>% 
+  ) |>
   # expanding the data into the different experimental conditions for interpretation
   unnest(data)
 
@@ -286,15 +306,16 @@ write_csv(
 
 # printing the results
 DT::datatable(
-  summary_results %>% mutate(across(where(is.numeric), round, 3)) %>% 
+  summary_results |>mutate(across(where(is.numeric), round, 3)) |>
     # moving and renaming columns purely for output presentation purposes
-    relocate(exp_num, num_classes, first_class_perc, pred_approach, num_observations) %>% 
+    relocate(exp_num, num_classes, first_class_perc, pred_approach, num_observations) |>
     rename(n_obs = num_observations, 
            ref_prob = first_class_perc,
            pred = pred_approach, 
            mean_acc = mean_accuracy, sd_acc = sd_accuracy,
            mean_sens = mean_sensitivity, sd_sens = sd_sensitivity, 
            mean_spec = mean_specificity, sd_spec = sd_specificity,
+           mean_prec = mean_precision, sd_prec = sd_precision,
            mean_f_meas = mean_f_measure, sd_f_meas = sd_f_measure), 
   filter = 'top',
   extensions = c('Buttons', 'FixedColumns'), 
